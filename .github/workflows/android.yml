@@ -1,3 +1,4 @@
+
 name: Build Android APK
 
 on:
@@ -42,9 +43,16 @@ jobs:
         run: |
           test -f pubspec.yaml || { echo "ERROR: pubspec.yaml is missing"; exit 1; }
           test -f lib/main.dart || { echo "ERROR: lib/main.dart is missing"; exit 1; }
+          test -f assets/icon_launcher.png || { echo "ERROR: launcher icon is missing"; exit 1; }
 
       - name: Get dependencies
         run: flutter pub get
+
+      - name: Generate app icon
+        run: dart run flutter_launcher_icons
+
+      - name: Generate native splash screen
+        run: dart run flutter_native_splash:create
 
       - name: Analyze Dart code
         run: flutter analyze
@@ -63,3 +71,4 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
+          
