@@ -1,20 +1,26 @@
+
 name: ghazi
 description: GHAZI (غزي) - لعبة جماعية بهاتف واحد.
 publish_to: none
 version: 0.3.0+3
+
 environment:
   sdk: ">=3.3.0 <4.0.0"
+
 dependencies:
   flutter:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
   shared_preferences: ^2.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
   flutter_launcher_icons: ^0.14.1
+  flutter_native_splash: ^2.4.6
+
 flutter:
   uses-material-design: true
   assets:
@@ -27,8 +33,19 @@ flutter:
         - asset: assets/fonts/Tajawal-Regular.ttf
         - asset: assets/fonts/Tajawal-Bold.ttf
           weight: 700
+
 flutter_launcher_icons:
   android: true
   image_path: assets/icon_launcher.png
   adaptive_icon_background: "#2B1D14"
   adaptive_icon_foreground: assets/icon_foreground.png
+
+flutter_native_splash:
+  color: "#2B1D14"
+  image: assets/icon_launcher.png
+  android: true
+  ios: false
+  android_12:
+    color: "#2B1D14"
+    image: assets/icon_launcher.png
+    
