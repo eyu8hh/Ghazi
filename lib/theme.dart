@@ -71,17 +71,26 @@ class GButton extends StatelessWidget {
       );
 }
 
+
 class GCard extends StatelessWidget {
   const GCard({super.key, required this.child, this.color});
+
   final Widget child;
   final Color? color;
+
   @override
   Widget build(BuildContext context) => Container(
         width: double.infinity,
         margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(color: color ?? earth, borderRadius: BorderRadius.circular(20)),
-        child: child,
+        child: Material(
+          color: color ?? earth,
+          borderRadius: BorderRadius.circular(20),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: child,
+          ),
+        ),
       );
 }
 
