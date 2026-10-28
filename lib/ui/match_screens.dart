@@ -1,668 +1,597 @@
-import 'dart:async';
-import 'package:flutter/material.dart';
+
+import 'dart:math';
+
+import 'package:flutter/foundation.dart';
+
 import '../data/settings.dart';
-import '../engine/config.dart';
-import '../engine/match.dart';
-import '../engine/models.dart';
-import '../theme.dart';
+import 'config.dart';
+import 'game.dart';
+import 'models.dart';
 
-class MatchScreen extends StatelessWidget {
-  const MatchScreen(this.c, {super.key});
-  final MatchController c;
+enum NightAction {
+  mafiaKill,
+  silence,
+  doctor,
+  investigator,
+  sniper,
+  decoy,
+}
 
-  String get _title => switch (c.phase) {
-        Phase.reveal => 'كشف الأدوار',
-        Phase.returnToFirst => 'استلام الهاتف',
-        Phase.night => 'الليل',
-        Phase.goodBoy => 'الولد الصالح',
-        Phase.dawn || Phase.discuss || Phase.dayEnd => 'النهار',
-        Phase.vote || Phase.tie || Phase.defense || Phase.verdict => 'التصويت',
-        Phase.ended => 'النتيجة',
-      };
+enum Phase {
+  reveal,
+  returnToFirst,
+  night,
+  goodBoy,
+  dawn,
+  discuss,
+  vote,
+  tie,
+  defense,
+  verdict,
+  dayEnd,
+  ended,
+}
 
-  Widget _body() => switch (c.phase) {
-        Phase.reveal => RevealView(c),
-        Phase.returnToFirst => ReturnToFirstView(c),
-        Phase.night => NightView(c),
-        Phase.goodBoy => GoodBoyView(c),
-        Phase.dawn => DawnView(c),
-        Phase.discuss => DiscussView(c),
-        Phase.vote => VoteView(c),
-        Phase.tie => TieView(c),
-        Phase.defense => DefenseView(c),
-        Phase.verdict => VerdictView(c),
-        Phase.dayEnd => DayEndView(c),
-        Phase.ended => EndView(c),
-      };
+const nightOrder = [
+  Role.mafia,
+  Role.doctor,
+  Role.investigator,
+  Role.sniper,
+];
 
-  @override
-  Widget build(BuildContext context) => PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, _) async {
-          if (didPop) return;
-          final ok = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('إنهاء المباراة؟'),
-              content: const Text('سيضيع تقدّم المباراة الحالية.'),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx, false), child: const Text('متابعة')),
-                TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('إنهاء')),
-              ],
-            ),
-          );
-          if (ok == true && context.mounted) Navigator.of(context).pop();
-        },
-        child: ListenableBuilder(
-          listenable: c,
-          builder: (context, _) => GScaffold(
-            title: _title,
-            child: AnimatedSwitcher(
-              // The previous screen disappears instantly (it may hold a secret
-              // role or result); only the new screen fades in.
-              duration: const Duration(milliseconds: 250),
-              reverseDuration: Duration.zero,
-              child: KeyedSubtree(key: ValueKey(c.viewKey), child: _body()),
-            ),
-          ),
+class MatchController extends ChangeNotifier {
+  MatchController(this.game, this.settings);
+
+  static MatchController create(
+    List<String> names,
+    RoleConfig cfg,
+    AppSettings s, {
+    Random? rng,
+  }) {
+    final r = rng ?? Random();
+    final players = assignRoles(names, cfg, r);
+
+    return MatchController(
+      Game(
+        players,
+        rng: r,
+        rules: GameRules(
+          doctorMaySelfProtect: s.doctorSelf,
+          dualMafiaPower: cfg.merged,
         ),
-      );
-}
-
-Widget _center(List<Widget> children) =>
-    Center(child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: children)));
-
-Widget _icon(IconData i) => Icon(i, size: 72, color: sandy);
-
-// ---------------- Reveal ----------------
-class RevealView extends StatefulWidget {
-  const RevealView(this.c, {super.key});
-  final MatchController c;
-  @override
-  State<RevealView> createState() => _RevealViewState();
-}
-
-class _RevealViewState extends State<RevealView> {
-  bool shown = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = widget.c;
-    final p = c.game.players[c.revealIndex];
-    if (!shown) {
-      return _center([
-        _icon(Icons.phone_android_rounded),
-        const SizedBox(height: 16),
-        const Text('مرّر الهاتف إلى', style: TextStyle(fontSize: 18, color: cream)),
-        Text(p.name, style: const TextStyle(fontSize: 36, color: sandy, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        Text('${c.revealIndex + 1} / ${c.game.players.length}',
-            style: const TextStyle(color: cream)),
-        const SizedBox(height: 24),
-        GButton('أنا ${p.name} وحدي أرى الشاشة — اعرض دوري',
-            onPressed: () => setState(() => shown = true)),
-      ]);
-    }
-    final mates = c.game.teammatesOf(p);
-    return _center([
-      const Text('دورك السري', style: TextStyle(fontSize: 18, color: cream)),
-      GCard(
-        color: p.isMafia ? rug : grass,
-        child: Column(children: [
-          Text(p.role.arabic,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 32, color: sandy, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text(roleDesc[p.role]!, textAlign: TextAlign.center),
-          if (p.role == Role.sheikh && c.game.canSilence(p)) ...[
-            const SizedBox(height: 8),
-            Text('وبحسب الإعداد المفعّل تحمل أيضاً قدرة ${Role.silencer.arabic}: ${roleDesc[Role.silencer]}',
-                textAlign: TextAlign.center),
-          ],
-          if (p.isMafia) ...[
-            const Divider(height: 24),
-            Text(
-              mates.isEmpty
-                  ? 'أنت الدجگال الوحيد — لا يوجد زملاء.'
-                  : 'زملاؤك في الدجگال: ${mates.join('، ')}',
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ]),
       ),
-      GButton(
-        c.revealIndex == c.game.players.length - 1 ? 'حفظت — أخفِ وابدأ الليل' : 'حفظت دوري — أخفِ',
-        icon: Icons.visibility_off_rounded,
-        onPressed: c.nextReveal,
-      ),
-    ]);
-  }
-}
-
-// ---------------- Return phone to first player ----------------
-/// After everyone has seen their own role, explicitly return the phone to
-/// the first player before starting the first night.
-class ReturnToFirstView extends StatefulWidget {
-  const ReturnToFirstView(this.c, {super.key});
-  final MatchController c;
-
-  @override
-  State<ReturnToFirstView> createState() => _ReturnToFirstViewState();
-}
-
-class _ReturnToFirstViewState extends State<ReturnToFirstView> {
-  bool confirmed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = widget.c;
-    final first = c.game.players.first;
-    if (!confirmed) {
-      return _center([
-        _icon(Icons.phone_android_rounded),
-        const SizedBox(height: 16),
-        const Text(
-          'انتهى الجميع من رؤية أدوارهم',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 22, color: cream),
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          'أخفوا الشاشة ومرّروا الهاتف إلى أول لاعب لبدء الليل.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: cream),
-        ),
-        const SizedBox(height: 20),
-        Text(
-          first.name,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-              fontSize: 36, color: sandy, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 24),
-        GButton(
-          'أنا ${first.name} — استلمت الهاتف',
-          onPressed: () => setState(() => confirmed = true),
-        ),
-      ]);
-    }
-
-    return _center([
-      _icon(Icons.nightlight_round),
-      const SizedBox(height: 16),
-      Text(
-        'هل أنت ${first.name}؟',
-        textAlign: TextAlign.center,
-        style: const TextStyle(
-            fontSize: 26, color: sandy, fontWeight: FontWeight.bold),
-      ),
-      const SizedBox(height: 8),
-      const Text(
-        'تأكد أن الجميع أبقى عينيه مغلقتين، ثم ابدأ الليل.',
-        textAlign: TextAlign.center,
-        style: TextStyle(color: cream),
-      ),
-      const SizedBox(height: 24),
-      GButton(
-        'ابدأ الليل',
-        icon: Icons.nightlight_round,
-        onPressed: c.beginFirstNight,
-      ),
-      GButton(
-        'ليس أنا — مرّر الهاتف',
-        primary: false,
-        onPressed: () => setState(() => confirmed = false),
-      ),
-    ]);
-  }
-}
-
-// ---------------- Night ----------------
-/// One night stage (Dajjal, Wild al-Santi, Investigator, Sniper). Everybody
-/// closes their eyes; only the holder of the called role takes the phone.
-/// When the role is dead or absent a camouflage screen is shown instead.
-class NightView extends StatefulWidget {
-  const NightView(this.c, {super.key});
-  final MatchController c;
-  @override
-  State<NightView> createState() => _NightViewState();
-}
-
-class _NightViewState extends State<NightView> {
-  bool ready = false;
-  Player? picked;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = widget.c;
-    final role = c.stageRole;
-    final name = role.arabic;
-
-    if (!c.stageActive) return DecoyStage(c: c, name: name);
-
-    final a = c.stageActor!;
-    if (!ready) {
-      final isMafia = role == Role.mafia;
-      final silence = c.mafiaStepIsSilence;
-      return _center([
-        _icon(Icons.nightlight_round),
-        const SizedBox(height: 16),
-        const Text('الليل — أغمضوا أعينكم جميعاً',
-            textAlign: TextAlign.center, style: TextStyle(fontSize: 18, color: cream)),
-        const SizedBox(height: 8),
-        Text(name,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 34, color: sandy, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        Text(
-          !isMafia
-              ? 'يفتح صاحب هذا الدور عينيه ويستلم الهاتف.'
-              : silence
-                  ? 'يفتح من يملك قدرة التسكيت عينيه ويستلم الهاتف.'
-                  : c.nightKillers.length == 1 && c.nightKillers.first.role == Role.sheikh
-                      ? 'يفتح شيخ المافيا عينيه ويستلم الهاتف للاغتيال.'
-                      : 'يفتح أفراد الدجگال أعينهم، ويستلم كل واحد منهم الهاتف بدوره (${c.mafiaIdx + 1} / ${c.mafiaStepCount}).',
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: cream),
-        ),
-        const SizedBox(height: 24),
-        GButton(isMafia ? 'أنا من الدجگال — جاهز' : 'أنا $name — جاهز',
-            onPressed: () => setState(() => ready = true)),
-      ]);
-    }
-
-    switch (role) {
-      case Role.mafia:
-        if (c.mafiaStepIsSilence) {
-          return PickerStep(
-            title: 'من تُسكت في نقاش النهار؟',
-            subtitle: 'لن يتكلم في النقاش القادم، ويصوّت عادة',
-            options: c.game.alive.where((p) => p != a).toList(),
-            onConfirm: c.submitNight,
-          );
-        }
-        return PickerStep(
-          title: 'اختر ضحية الليلة',
-          subtitle: 'الخطوة ${c.mafiaIdx + 1} / ${c.mafiaStepCount}',
-          options: c.game.alive.where((p) => !p.isMafia).toList(),
-          onConfirm: c.submitNight,
-        );
-      case Role.doctor:
-        return PickerStep(
-          title: 'من تحمي الليلة؟',
-          options: c.game.alive
-              .where((p) => c.game.rules.doctorMaySelfProtect || p != a)
-              .toList(),
-          onConfirm: c.submitNight,
-        );
-      case Role.investigator:
-        final t = picked;
-        if (t == null) {
-          return PickerStep(
-            title: 'من تريد التحقق منه؟',
-            options: c.game.alive.where((p) => p != a).toList(),
-            onConfirm: (p) => setState(() => picked = p),
-          );
-        }
-        return _center([
-          _icon(Icons.search_rounded),
-          const SizedBox(height: 16),
-          Text(t.name, style: const TextStyle(fontSize: 32, color: sandy)),
-          const SizedBox(height: 8),
-          Text(c.game.investigate(t) ? 'من الدجگال' : 'من الصالحين',
-              style: const TextStyle(fontSize: 26)),
-          const SizedBox(height: 24),
-          GButton('فهمت — أخفِ',
-              icon: Icons.visibility_off_rounded, onPressed: () => c.submitNight(null)),
-        ]);
-      case Role.sniper:
-        return PickerStep(
-          title: 'من تقنص؟',
-          subtitle: 'طلقة واحدة فقط — يمكنك تجاوزها',
-          options: c.game.alive.where((p) => p != a).toList(),
-          skipLabel: 'لا أقنص هذه الليلة',
-          onConfirm: c.submitNight,
-        );
-      default:
-        return const SizedBox.shrink();
-    }
-  }
-}
-
-/// Camouflage stage: looks like a normal stage to anyone listening, shows
-/// nothing, and ends by itself after a few seconds.
-class DecoyStage extends StatefulWidget {
-  const DecoyStage({super.key, required this.c, required this.name});
-  final MatchController c;
-  final String name;
-  @override
-  State<DecoyStage> createState() => _DecoyStageState();
-}
-
-class _DecoyStageState extends State<DecoyStage> {
-  Timer? _t;
-
-  @override
-  void initState() {
-    super.initState();
-    final seconds = 6 + widget.c.game.rng.nextInt(5);
-    _t = Timer(Duration(seconds: seconds), () {
-      if (mounted) widget.c.submitNight(null);
-    });
-  }
-
-  @override
-  void dispose() {
-    _t?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => _center([
-        _icon(Icons.nightlight_round),
-        const SizedBox(height: 16),
-        const Text('الليل — أغمضوا أعينكم جميعاً',
-            textAlign: TextAlign.center, style: TextStyle(fontSize: 18, color: cream)),
-        const SizedBox(height: 8),
-        Text(widget.name,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 34, color: sandy, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        const Text('يفتح صاحب هذا الدور عينيه ويستلم الهاتف.',
-            textAlign: TextAlign.center, style: TextStyle(color: cream)),
-      ]);
-}
-
-// ---------------- Good Boy ----------------
-/// The eliminated Good Boy chooses a living player who dies with him.
-class GoodBoyView extends StatefulWidget {
-  const GoodBoyView(this.c, {super.key});
-  final MatchController c;
-  @override
-  State<GoodBoyView> createState() => _GoodBoyViewState();
-}
-
-class _GoodBoyViewState extends State<GoodBoyView> {
-  bool ready = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = widget.c;
-    final gb = c.goodBoyPlayer;
-    if (gb == null) return const SizedBox.shrink();
-    if (!ready) {
-      return _center([
-        _icon(Icons.star_rounded),
-        const SizedBox(height: 16),
-        const Text('الولد الصالح — مرّر الهاتف إلى',
-            textAlign: TextAlign.center, style: TextStyle(fontSize: 18, color: cream)),
-        Text(gb.name,
-            style: const TextStyle(fontSize: 36, color: sandy, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 24),
-        GButton('أنا ${gb.name}', onPressed: () => setState(() => ready = true)),
-      ]);
-    }
-    return PickerStep(
-      title: 'اختر لاعباً يموت معك',
-      subtitle: 'لك اختيار واحد فقط',
-      options: c.game.alive,
-      confirmLabel: 'تأكيد الاختيار',
-      onConfirm: (p) => c.goodBoyPick(p!),
+      s,
     );
   }
-}
 
-// ---------------- Day ----------------
-String _names(List<Player> l) => l.map((p) => p.name).join('، ');
+  final Game game;
+  final AppSettings settings;
 
-class DawnView extends StatelessWidget {
-  const DawnView(this.c, {super.key});
-  final MatchController c;
-  @override
-  Widget build(BuildContext context) => _center([
-        _icon(Icons.wb_sunny_rounded),
-        const SizedBox(height: 12),
-        const Text('طلع النهار', style: titleStyle),
-        const SizedBox(height: 12),
-        Text(
-          c.dawnDeaths.isEmpty
-              ? 'مرّت الليلة بسلام — لم يخسر أحد.'
-              : 'خسرنا الليلة: ${_names(c.dawnDeaths)}',
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 20),
-        ),
-        const SizedBox(height: 12),
-        if (c.silenced != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text('أُسكت في نقاش اليوم: ${c.silenced!.name}',
-                textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, color: sandy)),
-          ),
-        Text('الأحياء: ${_names(c.game.alive)}',
-            textAlign: TextAlign.center, style: const TextStyle(color: cream)),
-        const SizedBox(height: 20),
-        GButton('ابدأ النقاش', icon: Icons.forum_rounded, onPressed: c.startDiscussion),
-      ]);
-}
+  Phase phase = Phase.reveal;
+  int revealIndex = 0;
+  int round = 1;
 
-class DiscussView extends StatelessWidget {
-  const DiscussView(this.c, {super.key});
-  final MatchController c;
-  @override
-  Widget build(BuildContext context) {
-    final sp = c.speakers[c.speakerIdx];
-    final last = c.speakerIdx == c.speakers.length - 1;
-    final mayor = c.mayor;
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      const Text('الدور في الحديث', textAlign: TextAlign.center, style: TextStyle(color: cream)),
-      Text(sp.name,
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 36, color: sandy, fontWeight: FontWeight.bold)),
-      const SizedBox(height: 12),
-      // When the 15 s end, the next speaker (or the vote) starts by itself.
-      Countdown(
-          key: ValueKey('sp${c.speakerIdx}'),
-          seconds: settings.speakSeconds,
-          onDone: c.nextSpeaker),
-      const SizedBox(height: 12),
-      if (mayor != null && mayor.mayorRevealed)
-        GCard(child: Text('العمدة: ${mayor.name} — صوته بثلاثة', textAlign: TextAlign.center)),
-      if (c.canRevealMayor)
-        GButton('العمدة يكشف هويته', primary: false, icon: Icons.badge_rounded, onPressed: () async {
-          final ok = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('كشف العمدة'),
-              content: const Text('يضغط العمدة فقط. هل أنت العمدة وتريد كشف هويتك؟'),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-                TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('نعم')),
-              ],
-            ),
-          );
-          if (ok == true) c.revealMayor();
-        }),
-      const Spacer(),
-      const GCard(
-        child: Text(
-          'تذكير: لا حلف بالله، لا أحاديث جانبية، لا مقاطعة للمتحدث، '
-          'ولا تأثير على اللعبة بعد الإقصاء.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: cream, fontSize: 13),
-        ),
-      ),
-      GButton(last ? 'بدء التصويت' : 'المتحدث التالي',
-          icon: last ? Icons.how_to_vote_rounded : Icons.arrow_back_rounded,
-          onPressed: c.nextSpeaker),
-    ]);
-  }
-}
+  // اللاعبون الأحياء الذين سيمر عليهم الهاتف كل ليلة.
+  List<Player> nightPlayers = [];
+  int nightPlayerIdx = 0;
 
-class VoteView extends StatelessWidget {
-  const VoteView(this.c, {super.key});
-  final MatchController c;
-  @override
-  Widget build(BuildContext context) {
-    final voter = c.voters[c.voterIdx];
-    return PickerStep(
-      key: ValueKey('v${c.voterIdx}-${c.revoted}'),
-      title: 'صوت ${voter.name}',
-      subtitle: 'ممنوع الكلام أثناء التصويت (${c.voterIdx + 1}/${c.voters.length})',
-      options: c.candidates.where((p) => p != voter).toList(),
-      confirmLabel: 'تأكيد التصويت',
-      onConfirm: (p) => c.castVote(p!),
-    );
-  }
-}
+  // إجراءات اللاعب الحالي.
+  List<NightAction> playerNightActions = [];
+  int playerNightActionIdx = 0;
 
-class TieView extends StatelessWidget {
-  const TieView(this.c, {super.key});
-  final MatchController c;
-  @override
-  Widget build(BuildContext context) {
-    const rules = {
-      TieRule.none: 'القاعدة المختارة: لا إقصاء عند التعادل.',
-      TieRule.revote: 'القاعدة المختارة: إعادة التصويت بين المتعادلين (مرة واحدة).',
-      TieRule.random: 'القاعدة المختارة: اختيار عشوائي بين المتعادلين.',
-    };
-    return _center([
-      _icon(Icons.balance_rounded),
-      const SizedBox(height: 12),
-      const Text('تعادل!', style: titleStyle),
-      const SizedBox(height: 8),
-      Text(_names(c.tiedLeaders), style: const TextStyle(fontSize: 22)),
-      const SizedBox(height: 8),
-      Text(rules[c.settings.tieRule]!, textAlign: TextAlign.center, style: const TextStyle(color: cream)),
-      const SizedBox(height: 20),
-      GButton('متابعة', onPressed: c.resolveTie),
-    ]);
-  }
-}
-
-class DefenseView extends StatelessWidget {
-  const DefenseView(this.c, {super.key});
-  final MatchController c;
-  @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('أعلى الأصوات — وقت الدفاع',
-              textAlign: TextAlign.center, style: TextStyle(color: cream)),
-          Text(c.accused!.name,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 36, color: sandy, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          // When the defense minute ends, the elimination vote starts by itself.
-          Countdown(seconds: settings.defenseSeconds, onDone: c.startVerdict),
-          const Spacer(),
-          GButton('انتهى الدفاع — التصويت على الإقصاء',
-              icon: Icons.how_to_vote_rounded, onPressed: c.startVerdict),
-        ],
-      );
-}
-
-class VerdictView extends StatelessWidget {
-  const VerdictView(this.c, {super.key});
-  final MatchController c;
-  @override
-  Widget build(BuildContext context) {
-    final voter = c.voters[c.voterIdx];
-    return _center([
-      Text('هل يُقصى ${c.accused!.name}؟', textAlign: TextAlign.center, style: titleStyle),
-      const SizedBox(height: 8),
-      Text('صوت ${voter.name} (${c.voterIdx + 1}/${c.voters.length}) — ممنوع الكلام',
-          textAlign: TextAlign.center, style: const TextStyle(color: cream)),
-      const SizedBox(height: 24),
-      GButton('إقصاء', icon: Icons.close_rounded, onPressed: () => c.castVerdict(true)),
-      GButton('إبقاء', primary: false, icon: Icons.check_rounded,
-          onPressed: () => c.castVerdict(false)),
-    ]);
-  }
-}
-
-class DayEndView extends StatelessWidget {
-  const DayEndView(this.c, {super.key});
-  final MatchController c;
-  @override
-  Widget build(BuildContext context) => _center([
-        _icon(Icons.gavel_rounded),
-        const SizedBox(height: 12),
-        Text(
-          c.dayDeaths.isEmpty ? 'لم يُقصَ أحد اليوم.' : 'أُقصي: ${_names(c.dayDeaths)}',
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 22),
-        ),
-        if (c.dayDeaths.isNotEmpty)
-          const Padding(
-            padding: EdgeInsets.only(top: 6),
-            child: Text('تُكشف الأدوار في نهاية المباراة', style: TextStyle(color: cream)),
-          ),
-        const SizedBox(height: 20),
-        GButton('متابعة', onPressed: c.continueAfterDay),
-      ]);
-}
-
-// ---------------- End ----------------
-class EndView extends StatefulWidget {
-  const EndView(this.c, {super.key});
-  final MatchController c;
-  @override
-  State<EndView> createState() => _EndViewState();
-}
-
-class _EndViewState extends State<EndView> {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => widget.c.saveResult());
+  NightAction get currentNightAction {
+    if (playerNightActions.isEmpty ||
+        playerNightActionIdx >= playerNightActions.length) {
+      return NightAction.decoy;
+    }
+    return playerNightActions[playerNightActionIdx];
   }
 
-  void _again() {
-    final names = widget.c.game.players.map((p) => p.name).toList();
-    final cfg = buildConfig(names.length, settings.enabled, mafia: settings.mafiaManual);
-    final err = cfg.validate(names.length);
-    if (err != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+  Player? get currentNightPlayer {
+    if (nightPlayerIdx < 0 || nightPlayerIdx >= nightPlayers.length) {
+      return null;
+    }
+    return nightPlayers[nightPlayerIdx];
+  }
+
+  int nightIdx = 0;
+  List<Player> nightKillers = [];
+  Player? nightSilencer;
+  int mafiaIdx = 0;
+
+  Player? silencedTarget;
+  Player? silenced;
+
+  bool _goodBoyAtNight = false;
+
+  final Map<Player, int> mafiaVotes = {};
+
+  Player? protectedPlayer;
+  Player? sniperTarget;
+  Player? _nightSniper;
+
+  List<Player> dawnDeaths = [];
+
+  List<Player> speakers = [];
+  int speakerIdx = 0;
+
+  List<Player> voters = [];
+  int voterIdx = 0;
+
+  Map<Player, Player> votes = {};
+  List<Player> candidates = [];
+  List<Player> tiedLeaders = [];
+
+  bool revoted = false;
+
+  Player? accused;
+  int yes = 0;
+  int no = 0;
+
+  List<Player> dayDeaths = [];
+
+  MatchResult? result;
+  bool _saved = false;
+
+  String get viewKey =>
+      '$phase-$round-$revealIndex-$nightIdx-$mafiaIdx-'
+      '$nightPlayerIdx-$playerNightActionIdx-'
+      '$speakerIdx-$voterIdx-$revoted';
+
+  // ---------------- Reveal ----------------
+
+  void nextReveal() {
+    if (phase != Phase.reveal) return;
+
+    revealIndex++;
+
+    if (revealIndex >= game.players.length) {
+      phase = Phase.returnToFirst;
+    }
+
+    notifyListeners();
+  }
+
+  void beginFirstNight() {
+    if (phase != Phase.returnToFirst) return;
+    _startNight();
+  }
+
+  // ---------------- Night ----------------
+
+  Role get stageRole {
+    switch (currentNightAction) {
+      case NightAction.mafiaKill:
+      case NightAction.silence:
+        return Role.mafia;
+      case NightAction.doctor:
+        return Role.doctor;
+      case NightAction.investigator:
+        return Role.investigator;
+      case NightAction.sniper:
+        return Role.sniper;
+      case NightAction.decoy:
+        return Role.kartiya;
+    }
+  }
+
+  bool get stageActive => currentNightPlayer != null;
+
+  Player? get stageActor => currentNightPlayer;
+
+  int get mafiaStepCount =>
+      nightKillers.length + (nightSilencer != null ? 1 : 0);
+
+  bool get mafiaStepIsSilence =>
+      currentNightAction == NightAction.silence;
+
+  List<NightAction> _actionsFor(Player player) {
+    final actions = <NightAction>[];
+
+    if (nightKillers.contains(player)) {
+      actions.add(NightAction.mafiaKill);
+    }
+
+    if (identical(nightSilencer, player)) {
+      actions.add(NightAction.silence);
+    }
+
+    if (player.role == Role.doctor) {
+      actions.add(NightAction.doctor);
+    }
+
+    if (player.role == Role.investigator) {
+      actions.add(NightAction.investigator);
+    }
+
+    if (player.role == Role.sniper && !game.sniperShotUsed) {
+      actions.add(NightAction.sniper);
+    }
+
+    if (actions.isEmpty) {
+      actions.add(NightAction.decoy);
+    }
+
+    return actions;
+  }
+
+  void _prepareCurrentPlayer() {
+    final player = currentNightPlayer;
+
+    playerNightActionIdx = 0;
+    playerNightActions = player == null ? [] : _actionsFor(player);
+  }
+
+  void _startNight() {
+    nightKillers = List<Player>.of(game.nightKillers);
+    nightSilencer = game.nightSilencer;
+
+    silencedTarget = null;
+    silenced = null;
+
+    mafiaIdx = 0;
+    mafiaVotes.clear();
+
+    protectedPlayer = null;
+    sniperTarget = null;
+
+    _nightSniper = game.alive
+        .where((p) => p.role == Role.sniper)
+        .firstOrNull;
+
+    nightPlayers = List<Player>.of(game.alive);
+    nightPlayerIdx = 0;
+    nightIdx = 0;
+
+    _prepareCurrentPlayer();
+
+    phase = Phase.night;
+    notifyListeners();
+  }
+
+  void submitNight(Player? target) {
+    if (phase != Phase.night) return;
+
+    final actor = currentNightPlayer;
+    if (actor == null) return;
+
+    final action = currentNightAction;
+
+    switch (action) {
+      case NightAction.mafiaKill:
+        if (target != null &&
+            target.alive &&
+            !target.isMafia) {
+          mafiaVotes[target] = (mafiaVotes[target] ?? 0) + 1;
+        }
+        mafiaIdx++;
+        break;
+
+      case NightAction.silence:
+        if (target != null &&
+            target.alive &&
+            !identical(target, actor)) {
+          silencedTarget = target;
+        }
+        mafiaIdx++;
+        break;
+
+      case NightAction.doctor:
+        final self = identical(target, actor);
+
+        protectedPlayer =
+            (self && !game.rules.doctorMaySelfProtect)
+                ? null
+                : target;
+        break;
+
+      case NightAction.investigator:
+        // نتيجة التحقيق تُعرض في الواجهة قبل استدعاء submitNight.
+        break;
+
+      case NightAction.sniper:
+        sniperTarget = target;
+        break;
+
+      case NightAction.decoy:
+        // الاختيار التمويهي لا يؤثر في اللعبة.
+        break;
+    }
+
+    playerNightActionIdx++;
+
+    if (playerNightActionIdx < playerNightActions.length) {
+      notifyListeners();
       return;
     }
-    Navigator.of(context).pushReplacement(MaterialPageRoute(
-        builder: (_) => MatchScreen(MatchController.create(names, cfg, settings))));
+
+    nightPlayerIdx++;
+    nightIdx = nightPlayerIdx;
+
+    if (nightPlayerIdx >= nightPlayers.length) {
+      playerNightActions = [];
+      playerNightActionIdx = 0;
+      _resolveNight();
+      return;
+    }
+
+    _prepareCurrentPlayer();
+    notifyListeners();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final c = widget.c;
-    final r = c.result!;
-    return ListView(children: [
-      _icon(Icons.emoji_events_rounded),
-      const SizedBox(height: 8),
-      Text(r.winner == Faction.mafia ? 'فاز فريق الدجگال' : 'فاز فريق الصالحين',
-          textAlign: TextAlign.center, style: titleStyle),
-      Text('الناجون: ${r.survivors} — لكل ناجٍ $pointsPerSurvivor نقطة (المجموع ${r.score})',
-          textAlign: TextAlign.center, style: const TextStyle(fontSize: 18)),
-      const SizedBox(height: 12),
-      for (final p in c.game.players)
-        GCard(
-          color: p.isMafia ? rug : grass,
-          child: Row(children: [
-            Icon(p.alive ? Icons.check_circle_rounded : Icons.cancel_rounded,
-                color: p.alive ? sandy : cream.withValues(alpha: 0.5)),
-            const SizedBox(width: 10),
-            Expanded(child: Text(p.name, style: const TextStyle(fontSize: 18))),
-            Text(p.role.arabic, style: const TextStyle(color: cream)),
-            if (p.alive && p.isMafia == (r.winner == Faction.mafia))
-              Padding(
-                padding: const EdgeInsetsDirectional.only(start: 10),
-                child: Text('+$pointsPerSurvivor', style: const TextStyle(color: sandy)),
-              ),
-          ]),
-        ),
-      GButton('مباراة جديدة بنفس اللاعبين', icon: Icons.replay_rounded, onPressed: _again),
-      GButton('القائمة الرئيسية',
-          primary: false,
-          icon: Icons.home_rounded,
-          onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst)),
-    ]);
+  void _resolveNight() {
+    Player? victim;
+
+    if (mafiaVotes.isNotEmpty) {
+      final top = mafiaVotes.values.reduce(max);
+
+      final tied = mafiaVotes.entries
+          .where((e) => e.value == top)
+          .map((e) => e.key)
+          .toList();
+
+      victim = tied[game.rng.nextInt(tied.length)];
+    }
+
+    dawnDeaths = List<Player>.of(
+      game.resolveNight(
+        mafiaTarget: victim,
+        protectedPlayer: protectedPlayer,
+      ),
+    );
+
+    final sniper = _nightSniper;
+    final target = sniperTarget;
+
+    if (sniper != null &&
+        sniper.alive &&
+        target != null &&
+        target.alive) {
+      dawnDeaths.addAll(game.sniperShoot(sniper, target));
+    }
+
+    final silencer = nightSilencer;
+    final silenceTarget = silencedTarget;
+
+    silenced = (silencer != null &&
+            silencer.alive &&
+            silenceTarget != null &&
+            silenceTarget.alive)
+        ? silenceTarget
+        : null;
+
+    if (game.pendingGoodBoy != null) {
+      _goodBoyAtNight = true;
+      phase = Phase.goodBoy;
+      notifyListeners();
+    } else {
+      _finishNight();
+    }
+  }
+
+  void _finishNight() {
+    result = game.checkVictory();
+    phase = result != null ? Phase.ended : Phase.dawn;
+    notifyListeners();
+  }
+
+  // ---------------- Good Boy ----------------
+
+  Player? get goodBoyPlayer => game.pendingGoodBoy;
+
+  void goodBoyPick(Player target) {
+    if (phase != Phase.goodBoy) return;
+
+    final taken = game.goodBoyTake(target);
+    if (taken.isEmpty) return;
+
+    if (_goodBoyAtNight) {
+      dawnDeaths.addAll(taken);
+      _finishNight();
+    } else {
+      dayDeaths.addAll(taken);
+      phase = Phase.dayEnd;
+      notifyListeners();
+    }
+  }
+
+  // ---------------- Day ----------------
+
+  Player? get mayor =>
+      game.alive.where((p) => p.role == Role.mayor).firstOrNull;
+
+  bool get canRevealMayor => mayor != null && !mayor!.mayorRevealed;
+
+  void revealMayor() {
+    final currentMayor = mayor;
+    if (currentMayor == null) return;
+
+    currentMayor.mayorRevealed = true;
+    notifyListeners();
+  }
+
+  void startDiscussion() {
+    if (phase != Phase.dawn) return;
+
+    speakers = game.alive
+        .where((p) => !identical(p, silenced))
+        .toList();
+
+    speakerIdx = 0;
+    revoted = false;
+    phase = Phase.discuss;
+
+    notifyListeners();
+  }
+
+  void nextSpeaker() {
+    if (phase != Phase.discuss) return;
+
+    speakerIdx++;
+
+    if (speakerIdx >= speakers.length) {
+      startVote();
+    } else {
+      notifyListeners();
+    }
+  }
+
+  void startVote({List<Player>? only}) {
+    voters = List<Player>.of(game.alive);
+    voterIdx = 0;
+    votes = {};
+    candidates = only ?? List<Player>.of(game.alive);
+
+    phase = Phase.vote;
+    notifyListeners();
+  }
+
+  void castVote(Player target) {
+    if (phase != Phase.vote || voterIdx >= voters.length) return;
+
+    votes[voters[voterIdx]] = target;
+    voterIdx++;
+
+    if (voterIdx >= voters.length) {
+      _finishVote();
+    } else {
+      notifyListeners();
+    }
+  }
+
+  void _finishVote() {
+    final leaders = game.tally(votes);
+    tiedLeaders = leaders;
+
+    if (leaders.isEmpty) {
+      _finishDay([]);
+    } else if (leaders.length == 1) {
+      accused = leaders.first;
+      phase = Phase.defense;
+      notifyListeners();
+    } else {
+      phase = Phase.tie;
+      notifyListeners();
+    }
+  }
+
+  void resolveTie() {
+    if (phase != Phase.tie) return;
+
+    switch (settings.tieRule) {
+      case TieRule.none:
+        _finishDay([]);
+        break;
+
+      case TieRule.random:
+        accused = tiedLeaders[game.rng.nextInt(tiedLeaders.length)];
+        phase = Phase.defense;
+        notifyListeners();
+        break;
+
+      case TieRule.revote:
+        if (!revoted) {
+          revoted = true;
+          startVote(only: tiedLeaders);
+        } else {
+          _finishDay([]);
+        }
+        break;
+    }
+  }
+
+  void startVerdict() {
+    if (phase != Phase.defense || accused == null) return;
+
+    voters = game.alive.where((p) => p != accused).toList();
+
+    voterIdx = 0;
+    yes = 0;
+    no = 0;
+
+    phase = Phase.verdict;
+    notifyListeners();
+  }
+
+  void castVerdict(bool eliminate) {
+    if (phase != Phase.verdict || voterIdx >= voters.length) return;
+
+    final voter = voters[voterIdx];
+
+    final weight =
+        (voter.role == Role.mayor && voter.mayorRevealed) ? 3 : 1;
+
+    if (eliminate) {
+      yes += weight;
+    } else {
+      no += weight;
+    }
+
+    voterIdx++;
+
+    if (voterIdx >= voters.length) {
+      final player = accused;
+
+      _finishDay(
+        yes > no && player != null
+            ? game.eliminateByVote(player)
+            : [],
+      );
+    } else {
+      notifyListeners();
+    }
+  }
+
+  void _finishDay(List<Player> deaths) {
+    dayDeaths = List<Player>.of(deaths);
+
+    if (game.pendingGoodBoy != null) {
+      _goodBoyAtNight = false;
+      phase = Phase.goodBoy;
+    } else {
+      phase = Phase.dayEnd;
+    }
+
+    notifyListeners();
+  }
+
+  void continueAfterDay() {
+    if (phase != Phase.dayEnd) return;
+
+    result = game.checkVictory();
+    accused = null;
+
+    if (result != null) {
+      phase = Phase.ended;
+      notifyListeners();
+    } else {
+      round++;
+      _startNight();
+    }
+  }
+
+  void saveResult() {
+    final currentResult = result;
+
+    if (_saved || currentResult == null) return;
+
+    _saved = true;
+
+    settings.addHistory(
+      HistoryEntry(
+        DateTime.now(),
+        currentResult.winner,
+        currentResult.score,
+        currentResult.survivors,
+        [
+          for (final p in game.players)
+            {
+              'n': p.name,
+              'r': p.role.name,
+              'a': p.alive,
+            },
+        ],
+      ),
+    );
   }
 }
