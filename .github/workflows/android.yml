@@ -32,7 +32,11 @@ jobs:
           cache: true
 
       - name: Generate Android platform files
-        run: flutter create --platforms=android --org com.eyu8 --project-name ghazi .
+        run: |
+          flutter create --platforms=android --org com.eyu8 --project-name ghazi .
+          if ! git ls-files --error-unmatch test/widget_test.dart >/dev/null 2>&1; then
+            rm -f test/widget_test.dart
+          fi
 
       - name: Verify project files
         run: |
