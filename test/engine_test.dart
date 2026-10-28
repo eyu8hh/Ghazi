@@ -151,19 +151,33 @@ void main() {
     expect(g.pendingGoodBoy, gb);
   });
 
-  test('victory and scoring: 70 per living winner', () {
+    test('victory and scoring: 70 per living winner', () {
     expect(pointsPerSurvivor, 70);
+
     final g = game({Role.mafia: 1, Role.kartiya: 4});
     expect(g.checkVictory(), isNull);
+
     g.eliminateByVote(of(g, Role.mafia));
+
     final r = g.checkVictory()!;
     expect(r.winner, Faction.good);
     expect(r.survivors, 4);
     expect(r.score, 4 * 70);
-    final g2 = game({Role.mafia: 1, Role.kartiya: 2});
-    g2.eliminateByVote(g2.players.firstWhere((p) => p.role == Role.kartiya));
+
+    // Valid 5-player game: after eliminating 3 good players,
+    // one Dajjal and one good player remain.
+    final g2 = game({Role.mafia: 1, Role.kartiya: 4});
+
+    for (var i = 0; i < 3; i++) {
+      final target = g2.players.firstWhere(
+        (p) => p.role == Role.kartiya && p.alive,
+      );
+      g2.eliminateByVote(target);
+    }
+
     final r2 = g2.checkVictory()!;
-    expect(r2.winner, Faction.mafia); // 1 alive Dajjal vs 1 alive other
+    expect(r2.winner, Faction.mafia);
+    expect(r2.survivors, 1);
     expect(r2.score, 70);
   });
 
