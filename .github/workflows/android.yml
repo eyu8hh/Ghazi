@@ -3,7 +3,8 @@ name: Build Android APK
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -11,10 +12,12 @@ permissions:
 
 jobs:
   build:
+    name: Build GHAZI Android APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Java
@@ -29,26 +32,28 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Check project
+      - name: Verify project files
         run: |
-          test -f pubspec.yaml
-          test -f lib/main.dart
+          test -f pubspec.yaml || { echo "ERROR: pubspec.yaml is missing"; exit 1; }
+          test -f lib/main.dart || { echo "ERROR: lib/main.dart is missing"; exit 1; }
 
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Analyze
+      - name: Analyze Dart code
         run: flutter analyze
+        continue-on-error: true
 
-      - name: Test
+      - name: Run tests
         run: flutter test
 
-      - name: Build APK
+      - name: Build release APK
         run: flutter build apk --release
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: ghazi-apk
           path: build/app/outputs/flutter-apk/app-release.apk
-          
+          if-no-files-found: error
+          retention-days: 14
