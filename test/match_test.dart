@@ -14,11 +14,17 @@ MatchController mk(Map<Role, int> c, {AppSettings? s, int seed = 1}) {
       rng: Random(seed));
 }
 
+
 void toNight(MatchController c) {
   for (var i = 0; i < c.game.players.length; i++) {
     c.nextReveal();
   }
+
+  if (c.phase == Phase.returnToFirst) {
+    c.beginFirstNight();
+  }
 }
+
 
 /// Plays a whole night. Stages without a living participant ignore the
 /// argument, exactly like the camouflage screens in the UI.
